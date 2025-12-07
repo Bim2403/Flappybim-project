@@ -14,6 +14,7 @@ BUTTON_COLOR = (70, 130, 180)       # Steel Blue
 BUTTON_HOVER = (100, 149, 237)      # Cornflower Blue
 BUTTON_ACTIVE = (255, 140, 0)       # Dark Orange
 TEXT_COLOR = (255, 255, 255)
+COIN_COLOR = (255, 215, 0)          # Gold
 
 # HITBOX CONFIGURATION
 HITBOX_WIDTH = 25   # The width of the area that kills the bird (Fair size)
@@ -42,14 +43,15 @@ font_supersmall = pygame.font.Font(None, 20)
 # --- 2. GLOBAL VARIABLES ---
 game_state = "MENU"
 current_difficulty = "NORMAL"
-score = 0
+score = 0        # Pipe Score
+coin_score = 0   # Coin Score (New)
 high_score = 0
-autopilot = False
 
 # Physics Variables
 bird_rect = None
 bird_movement = 0
 pipes = []
+coins = []  # List to store coin rectangles
 last_pipe_time = 0
 
 # Background Variables
@@ -97,6 +99,16 @@ pipe_img_bottom = column_original
 # Create the Top Pipe (Flipped vertically)
 pipe_img_top = pygame.transform.flip(column_original, False, True)
 
+# Load Coin Image (Simple circle fallback if image not found)
+try:
+    coin_img_original = pygame.image.load("coin.png").convert_alpha()
+    coin_img = pygame.transform.scale(coin_img_original, (30, 30))
+except:
+    coin_img = pygame.Surface((30, 30), pygame.SRCALPHA)
+    pygame.draw.circle(coin_img, COIN_COLOR, (15, 15), 15)
+    pygame.draw.circle(coin_img, (218, 165, 32), (15, 15), 15, 2) # Darker border
+
+
 # --- 4. BUTTON CLASS ---
 class Button:
     def __init__(self, text, x, y, w, h):
@@ -128,18 +140,19 @@ class Button:
 # Buttons
 btn_start = Button("START", 100, 300, 200, 45)
 btn_diff  = Button("DIFFICULTY", 100, 355, 200, 45)
-btn_auto  = Button("AUTO: OFF", 100, 410, 200, 45)
-btn_quit  = Button("QUIT", 100, 465, 200, 45)
+btn_quit  = Button("QUIT", 100, 410, 200, 45)
 btn_retry = Button("RETRY", 100, 320, 200, 50)
 btn_menu  = Button("MENU", 100, 380, 200, 50)
 
 # --- 5. GAME FUNCTIONS ---
 def reset_game():
-    global bird_rect, bird_movement, pipes, score, current_bg_index, pipes_since_switch, last_pipe_time
+    global bird_rect, bird_movement, pipes, coins, score, coin_score, current_bg_index, pipes_since_switch, last_pipe_time
     bird_rect = bird_img.get_rect(center=(100, SCREEN_HEIGHT // 2))
     bird_movement = 0
     pipes.clear()
+    coins.clear()
     score = 0
+    coin_score = 0 # Reset coin score
     last_pipe_time = pygame.time.get_ticks()
     current_bg_index = 0
     pipes_since_switch = 0
@@ -149,59 +162,13 @@ def draw_text_centered(text, font, y, color=WHITE):
     rect = surf.get_rect(center=(SCREEN_WIDTH // 2, y))
     screen.blit(surf, rect)
 
-# --- AI SIMULATION FUNCTION ---
-def get_best_move(bird_rect, bird_movement, pipes, settings):
-    # 1. Identify Target Pipe
-    target_pipe = None
-    closest_x = 9999
-    target_y = SCREEN_HEIGHT // 2
-    
-    for pipe in pipes:
-        if pipe.right > bird_rect.left and pipe.top > 0: # Find bottom pipe
-            if pipe.left < closest_x:
-                closest_x = pipe.left
-                target_pipe = pipe
-
-    if target_pipe:
-        gap_center = target_pipe.top - (settings['gap'] / 2)
-        target_y = gap_center
-
-    # 2. Simulation Physics
-    def simulate(start_y, start_vel, action_jump):
-        sim_y = start_y
-        sim_vel = start_vel
-        sim_rect = pygame.Rect(bird_rect.x, 0, bird_rect.width, bird_rect.height)
-        
-        if action_jump: sim_vel = -7
-        
-        for i in range(40):
-            sim_vel += settings['gravity']
-            sim_y += sim_vel
-            sim_rect.y = int(sim_y)
-            
-            if sim_rect.top <= 0 or sim_rect.bottom >= SCREEN_HEIGHT:
-                return False, 9999
-            
-            current_pipe_offset = i * settings['speed']
-            for p in pipes:
-                p_shifted = p.copy()
-                p_shifted.x -= current_pipe_offset
-                if sim_rect.colliderect(p_shifted):
-                    return False, 9999
-        
-        dist = abs(sim_y - target_y)
-        return True, dist
-
-    # 3. Evaluate Options
-    alive_glide, score_glide = simulate(bird_rect.y, bird_movement, False)
-    alive_jump, score_jump = simulate(bird_rect.y, bird_movement, True)
-    
-    if alive_glide and not alive_jump: return False
-    elif alive_jump and not alive_glide: return True
-    elif alive_jump and alive_glide:
-        if score_jump < score_glide - 5: return True
-        return False
-    else: return True
+def draw_coin_score(surface, count):
+    """Draws the coin score in the top-left corner."""
+    score_surf = font_small.render(f"{count}", True, WHITE)
+    # Draw icon
+    surface.blit(coin_img, (10, 10))
+    # Draw text next to icon
+    surface.blit(score_surf, (45, 15))
 
 # --- 6. MAIN GAME LOOP ---
 running = True
@@ -218,14 +185,6 @@ while running:
                 modes = list(DIFFICULTIES.keys())
                 idx = (modes.index(current_difficulty) + 1) % len(modes)
                 current_difficulty = modes[idx]
-            elif btn_auto.is_clicked(event):
-                autopilot = not autopilot
-                if autopilot:
-                    btn_auto.text = "AUTO: ON"
-                    btn_auto.special_color = BUTTON_ACTIVE
-                else:
-                    btn_auto.text = "AUTO: OFF"
-                    btn_auto.special_color = None
             elif btn_quit.is_clicked(event):
                 running = False
         
@@ -251,18 +210,11 @@ while running:
         screen.blit(bird_img, (SCREEN_WIDTH//2 - 25, 200))
         btn_start.draw(screen)
         btn_diff.draw(screen)
-        btn_auto.draw(screen)
         btn_quit.draw(screen)
 
     elif game_state == "PLAYING":
         settings = DIFFICULTIES[current_difficulty]
         
-        # --- AUTOPILOT LOGIC ---
-        if autopilot:
-            should_jump = get_best_move(bird_rect, bird_movement, pipes, settings)
-            if should_jump:
-                bird_movement = -7
-
         # 1. Physics
         bird_movement += settings['gravity']
         bird_rect.centery += bird_movement
@@ -270,42 +222,54 @@ while running:
         rotated_bird = pygame.transform.rotozoom(bird_img, -bird_movement * 3, 1)
         screen.blit(rotated_bird, bird_rect)
         
-        # 2. Pipe Spawning
+        # 2. Pipe and Coin Spawning
         current_time = pygame.time.get_ticks()
         if current_time - last_pipe_time > settings['frequency']:
             height = random.randint(200, 450)
             gap = settings['gap']
             
             # --- IMPORTANT: Collision Rect (Hitbox) ---
-            # We use HITBOX_WIDTH (50px) for the logic so it's fair.
             btm_pipe = pygame.Rect(SCREEN_WIDTH, height, HITBOX_WIDTH, SCREEN_HEIGHT)
             top_pipe = pygame.Rect(SCREEN_WIDTH, height - gap - SCREEN_HEIGHT, HITBOX_WIDTH, SCREEN_HEIGHT)
             
             pipes.append(btm_pipe)
             pipes.append(top_pipe)
+
+            # Spawn Coin (50% Chance)
+            if random.choice([True, False]): 
+                # Coin appears in the middle of the gap
+                coin_y = height - (gap // 2) - 15 
+                coin_rect = pygame.Rect(SCREEN_WIDTH + (HITBOX_WIDTH // 2) - 15, coin_y, 30, 30)
+                coins.append(coin_rect)
+
             last_pipe_time = current_time
 
         # 3. Collision & Drawing
         for pipe in pipes:
             pipe.centerx -= settings['speed']
             
-            # --- VISUAL DRAWING FIX ---
-            # Calculate the centered position for the image relative to the hitbox
+            # Draw visual pipes
             draw_x = pipe.x - IMAGE_OFFSET_X
-            
             if pipe.top < 0:
-                # Top pipe
                 screen.blit(pipe_img_top, (draw_x, pipe.y))
             else:
-                # Bottom pipe
                 screen.blit(pipe_img_bottom, (draw_x, pipe.y))
-            
-            # Debug: Uncomment below to see the Red Hitbox vs The Image
-            # pygame.draw.rect(screen, (255, 0, 0), pipe, 1)
             
             if bird_rect.colliderect(pipe):
                 game_state = "GAMEOVER"
         
+        # Coin Logic
+        for coin in coins[:]: 
+            coin.centerx -= settings['speed']
+            screen.blit(coin_img, coin)
+            
+            if bird_rect.colliderect(coin):
+                coin_score += 1 # Add to individual coin score
+                coins.remove(coin)
+            elif coin.right < 0:
+                coins.remove(coin)
+
+        # Remove off-screen pipes
         if pipes and pipes[0].right < 0:
             pipes.pop(0)
             pipes.pop(0)
@@ -318,9 +282,9 @@ while running:
         if bird_rect.top <= 0 or bird_rect.bottom >= SCREEN_HEIGHT:
             game_state = "GAMEOVER"
 
+        # Draw Scores
         draw_text_centered(str(score), font_title, 50)
-        if autopilot:
-            draw_text_centered("AUTO AI", font_supersmall, 85, (255, 165, 0))
+        draw_coin_score(screen, coin_score)
 
         if score > high_score: high_score = score
 
@@ -331,15 +295,23 @@ while running:
                 screen.blit(pipe_img_top, (draw_x, pipe.y))
             else:
                 screen.blit(pipe_img_bottom, (draw_x, pipe.y))
+        
+        for coin in coins:
+            screen.blit(coin_img, coin)
                 
         screen.blit(rotated_bird, bird_rect)
         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
         overlay.set_alpha(160)
         overlay.fill(BLACK)
         screen.blit(overlay, (0,0))
-        draw_text_centered("GAME OVER", font_title, 150)
-        draw_text_centered(f"Score: {score}", font_ui, 220)
-        draw_text_centered(f"Best: {high_score}", font_small, 260)
+        
+        draw_text_centered("GAME OVER", font_title, 130)
+        draw_text_centered(f"Score: {score}", font_ui, 200)
+        draw_text_centered(f"Best: {high_score}", font_small, 240)
+        
+        # Show Coin Score Summary
+        draw_text_centered(f"Coins Collected: {coin_score}", font_small, 280, COIN_COLOR)
+
         btn_retry.draw(screen)
         btn_menu.draw(screen)
 
